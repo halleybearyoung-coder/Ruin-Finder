@@ -1,1 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ancient City Parkour - HD</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background: #0f172a; font-family: 'Georgia', serif; }
+        canvas { display: block; image-rendering: crisp-edges; }
+        #ui-layer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; color: white; text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+        }
+        .vignette {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: radial-gradient(circle, transparent 40%, rgba(0,0,0,0.4) 100%);
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
 
+    <div class="vignette"></div>
+    <div id="ui-layer">
+        <div class="p-8 flex justify-between items-start">
+            <div class="flex flex-col gap-1">
+                <h1 class="text-3xl font-bold tracking-[0.2em] uppercase text-amber-500">The Sunken Spire</h1>
+                <div class="flex items-center gap-4">
+                    <div class="px-3 py-1 bg-amber-900/50 border border-amber-500/30 rounded text-sm font-mono">
+                        REGION: <span id="level-name">Outer Gates</span>
+                    </div>
+                </div>
+            </div>
+            <div class="flex flex-col items-end">
+                <div class="text-xs uppercase tracking-widest text-amber-200/60 mb-1">Anima Stability</div>
+                <div class="w-64 h-3 bg-slate-900 rounded-full border border-amber-600/50 overflow-hidden shadow-[0_0_15px_rgba(245,158,11,0.2)]">
+                    <div id="health-bar" class="h-full bg-gradient-to-r from-red-600 to-amber-500 transition-all duration-500" style="width: 100%"></div>
+                </div>
+            </div>
+        </div>
+
+        <div id="start-screen" class="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/80 backdrop-blur-md pointer-events-auto">
+            <div class="mb-4 text-amber-500 text-sm tracking-[0.5em] uppercase">Ruins of Aethelgard</div>
+            <h2 class="text-7xl font-serif italic text-white mb-8 drop-shadow-2xl">Ancient Parkour</h2>
+            <button id="start-btn" class="group relative px-12 py-4 bg-transparent border-2 border-amber-500 text-amber-500 font-bold overflow-hidden transition-all hover:text-white">
+                <span class="relative z-10 uppercase tracking-widest">Awaken the Spirit</span>
+                <div class="absolute inset-0 bg-amber-500 translate-y-full group-hover:translate-y-0 transition-transform duration-300"></div>
+            </button>
+            <div class="mt-12 flex gap-8 text-amber-200/40 text-xs uppercase tracking-widest">
+                <span>[WASD] Move</span>
+                <span>[Space] Leap</span>
+                <span>[Shift] Ethereal Dash</span>
+            </div>
+        </div>
+
+        <div id="boss-ui" class="hidden absolute bottom-16 left-1/2 -translate-x-1/2 w-3/4 max-w-2xl">
+            <div class="flex justify-between items-end mb-2">
+                <span id="boss-name" class="text-amber-400 font-serif italic text-xl">The Sentinel</span>
+                <span class="text-xs text-amber-200/50 tracking-widest uppercase">Guardian Entity</span>
+            </div>
+            <div class="w-full h-2 bg-slate-950 rounded-full border border-amber-500/30 overflow-hidden">
+                <div id="boss-health" class="h-full bg-gradient-to-r from-orange-600 via-amber-400 to-white transition-all duration-300" style="width: 100%"></div>
+            </div>
+        </div>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const TILE_SIZE = 64;
+        
+        // --- ASSET MANAGER (File Calls + Procedural Fallbacks) ---
+        const SpriteCache = {
+            images: {},
+            placeholders: {},
+            
+            init() {
+                // Generate procedural placeholders for all assets
+                this.placeholders.stone = this.createCanvas(TILE_SIZE, TILE_SIZE, (c, x) => {
+                    x.fillStyle = '#475569';
+                    x.fillRect(0, 0, TILE_SIZE, TILE_SIZE);
+                    x.fillStyle = '#334155';
+                    for(let i=0; i<10; i++) x.fillRect(Math.random()*TILE_SIZE, Math.random()*TILE_SIZE, 10, 2);
+                    x.strokeStyle = '#64748b';
+                    x.lineWidth = 2;
+                    x.strokeRect(2, 2, TILE_SIZE-4, TILE_SIZE-4);
+                    x.fillStyle = '#166534';
+                    if(Math.random() > 0.5) x.fillRect(0, 0, TILE_SIZE, 8);
+                });
+
+                this.placeholders.platform = this.createCanvas(TILE_SIZE, 32, (c, x) => {
+                    const grad = x.createLinearGradient(0,0,0,32);
+                    grad.addColorStop(0, '#94a3b8');
+                    grad.addColorStop(1, '#475569');
+                    x.fillStyle = grad;
+                    x.fillRect(0, 0, TILE_SIZE, 32);
+                    x.strokeStyle = '#fde68a';
+                    x.lineWidth = 1;
+                    x.strokeRect(1,1, TILE_SIZE-2, 30);
+                });
+
+                // Asset sources - These calls are to external files
+                // Once you move to GitHub, place your PNGs in these paths
+                const sources = {
+                    stone: 'sprites/stone.png',
+                    platform: 'sprites/platform.png',
+                    player: 'main_character_right_walk',
+                    boss1: 'sprites/sentinel.png',
+                    boss2: 'sprites/wraith.png',
+                    bg_far: 'sprites/mountains.png',
+                    bg_mid: 'sprites/towers.png'
+                };
+
+                for (let key in sources) {
+                    this.images[key] = new Image();
+                    this.images[key].src = sources[key];
+                    // On error, the draw code will naturally fallback to placeholders
+                }
+            },
+
+            // Universal drawing method that handles File vs Placeholder logic
+            draw(ctx, key, x, y, w, h, fallbackDrawFn) {
+                const img = this.images[key];
+                if (img && img.complete && img.naturalWidth > 0) {
+                    ctx.drawImage(img, x, y, w, h);
+                } else if (this.placeholders[key]) {
+                    ctx.drawImage(this.placeholders[key], x, y, w, h);
+                } else if (fallbackDrawFn) {
+                    fallbackDrawFn(ctx, x, y, w, h);
+                }
+            },
+
+            createCanvas(w, h, drawFn) {
+                const c = document.createElement('canvas');
+                c.width = w; c.height = h;
+                drawFn(c, c.getContext('2d'));
+                return c;
+            }
+        };
+
+        // --- GAME OBJECTS ---
+        const config = {
+            gravity: 0.55,
+            friction: 0.88,
+            jump: -13,
+            speed: 0.9,
+            maxSpeed: 7,
+            dashForce: 18
+        };
+
+        let currentLevel = 1;
+        let gameState = 'START';
+        let camera = { x: 0, y: 0, shake: 0 };
+        let platforms = [];
+        let particles = [];
+        let boss = null;
+
+        const player = {
+            x: 100, y: 100, w: 40, h: 60,
+            vx: 0, vy: 0,
+            onGround: false,
+            health: 100,
+            facing: 1,
+            dashCd: 0,
+            dashTime: 0,
+            invul: 0,
+            frame: 0,
+
+            update() {
+                if(this.invul > 0) this.invul--;
+                if(this.dashCd > 0) this.dashCd--;
+                
+                const moveLeft = keys['KeyA'] || keys['ArrowLeft'];
+                const moveRight = keys['KeyD'] || keys['ArrowRight'];
+
+                if(moveLeft) { this.vx -= config.speed; this.facing = -1; }
+                if(moveRight) { this.vx += config.speed; this.facing = 1; }
+
+                if((keys['ShiftLeft'] || keys['KeyK']) && this.dashCd === 0) {
+                    this.vx = this.facing * config.dashForce;
+                    this.dashTime = 12;
+                    this.dashCd = 60;
+                    this.vy = 0;
+                    spawnParticles(this.x, this.y + 30, '#ffffff', 15);
+                }
+
+                if(this.dashTime > 0) {
+                    this.dashTime--;
+                    this.vy = 0;
+                } else {
+                    this.vy += config.gravity;
+                }
+
+                this.vx *= config.friction;
+                this.x += this.vx;
+                this.y += this.vy;
+                this.frame += Math.abs(this.vx) * 0.1;
+
+                if(this.y > 2000) this.die();
+            },
+
+            draw() {
+                ctx.save();
+                ctx.translate(this.x - camera.x, this.y - camera.y);
+                if(this.invul % 6 > 3) ctx.globalAlpha = 0.3;
+
+                // Call Sprite File for Player
+                SpriteCache.draw(ctx, 'player', 0, 0, this.w, this.h, (x) => {
+                    // Procedural Fallback if player.png is missing
+                    x.fillStyle = '#fbbf24';
+                    x.beginPath(); x.arc(20, 10, 10, 0, Math.PI*2); x.fill();
+                    x.fillRect(10, 20, 20, 30);
+                    x.fillStyle = '#b45309';
+                    const capeW = Math.sin(this.frame) * 5;
+                    x.fillRect(this.facing === 1 ? 5 : 25, 20, 10 + capeW, 35);
+                    x.fillStyle = '#fff';
+                    x.fillRect(this.facing === 1 ? 22 : 12, 8, 4, 4);
+                });
+
+                ctx.restore();
+            },
+
+            die() {
+                this.health = 100;
+                createLevel(currentLevel);
+            }
+        };
+
+        // --- WORLD GENERATION ---
+        function createLevel(lv) {
+            platforms = [];
+            boss = null;
+            document.getElementById('boss-ui').classList.add('hidden');
+            
+            if(lv === 1) {
+                document.getElementById('level-name').innerText = "THE FORGOTTEN PLAZA";
+                platforms.push({ x: 0, y: 600, w: 800, h: 200, type: 'stone' });
+                for(let i=0; i<4; i++) {
+                    platforms.push({ x: 1000 + i*400, y: 500 - i*50, w: 200, h: 32, type: 'platform' });
+                }
+                platforms.push({ x: 2800, y: 600, w: 1200, h: 300, type: 'stone' });
+                spawnBoss(1);
+                player.x = 100; player.y = 500;
+            } else {
+                document.getElementById('level-name').innerText = "THE CELESTIAL BRIDGE";
+                platforms.push({ x: 0, y: 400, w: 400, h: 100, type: 'stone' });
+                for(let i=0; i<8; i++) {
+                    platforms.push({ x: 500 + i*350, y: 400 + Math.sin(i)*150, w: 128, h: 32, type: 'platform' });
+                }
+                platforms.push({ x: 3500, y: 300, w: 1500, h: 500, type: 'stone' });
+                spawnBoss(2);
+                player.x = 100; player.y = 300;
+            }
+        }
+
+        function spawnBoss(type) {
+            if(type === 1) {
+                boss = {
+                    name: "Stone Sentinel", spriteKey: 'boss1',
+                    x: 3400, y: 450, w: 128, h: 150,
+                    hp: 100, maxHp: 100, timer: 0, state: 'idle',
+                    update() {
+                        this.timer++;
+                        if(this.state === 'idle' && this.timer > 100) { this.state = 'jump'; this.timer = 0; }
+                        if(this.state === 'jump') {
+                            if(this.timer < 40) this.y -= 5;
+                            else if(this.timer < 60) this.y += 15;
+                            else {
+                                this.state = 'idle'; this.timer = 0;
+                                this.y = 450; camera.shake = 15;
+                                spawnParticles(this.x + 64, this.y + 150, '#94a3b8', 30);
+                                if(player.onGround && Math.abs(player.x - this.x) < 500) damagePlayer(20);
+                            }
+                        }
+                        if(player.vy > 0 && rectIntersect(player.x, player.y, player.w, player.h, this.x, this.y, this.w, 30)) {
+                            this.hp -= 20; player.vy = config.jump; updateBossUI();
+                        }
+                    },
+                    draw() {
+                        SpriteCache.draw(ctx, this.spriteKey, this.x - camera.x, this.y - camera.y, this.w, this.h, (x, dx, dy, dw, dh) => {
+                            x.fillStyle = '#64748b';
+                            x.shadowBlur = 15; x.shadowColor = 'cyan';
+                            x.fillRect(dx, dy, dw, dh);
+                            x.shadowBlur = 0;
+                            x.fillStyle = '#22d3ee';
+                            x.fillRect(dx + 20, dy + 40, 88, 10);
+                        });
+                    }
+                };
+            } else {
+                boss = {
+                    name: "Sky Wraith", spriteKey: 'boss2',
+                    x: 4200, y: 100, w: 160, h: 80,
+                    hp: 150, maxHp: 150, timer: 0,
+                    update() {
+                        this.timer += 0.05;
+                        this.y = 200 + Math.sin(this.timer) * 150;
+                        this.x = 4200 + Math.cos(this.timer * 0.5) * 400;
+                        if(rectIntersect(player.x, player.y, player.w, player.h, this.x, this.y, this.w, this.h)) damagePlayer(15);
+                        if(player.vy > 0 && rectIntersect(player.x, player.y, player.w, player.h, this.x, this.y, this.w, 40)) {
+                            this.hp -= 30; player.vy = config.jump; updateBossUI();
+                        }
+                    },
+                    draw() {
+                        SpriteCache.draw(ctx, this.spriteKey, this.x - camera.x, this.y - camera.y, this.w, this.h, (x, dx, dy, dw, dh) => {
+                            x.fillStyle = 'rgba(255,255,255,0.7)';
+                            x.beginPath(); x.ellipse(dx + dw/2, dy + dh/2, dw/2, dh/2, 0, 0, Math.PI*2); x.fill();
+                        });
+                    }
+                };
+            }
+            document.getElementById('boss-ui').classList.remove('hidden');
+            document.getElementById('boss-name').innerText = boss.name;
+            updateBossUI();
+        }
+
+        // --- BACKGROUND RENDERING ---
+        function drawBackground() {
+            const sky = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            sky.addColorStop(0, '#1e1b4b');
+            sky.addColorStop(1, '#4338ca');
+            ctx.fillStyle = sky;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Far Layer (File call: mountains.png)
+            for(let i=0; i<5; i++) {
+                const x = (i * 1024) - (camera.x * 0.1) % 1024;
+                SpriteCache.draw(ctx, 'bg_far', x, canvas.height - 600, 1024, 600, (x, dx, dy, dw, dh) => {
+                    x.fillStyle = '#312e81';
+                    x.beginPath(); x.moveTo(dx, canvas.height); x.lineTo(dx + dw/2, dy); x.lineTo(dx + dw, canvas.height); x.fill();
+                });
+            }
+
+            // Mid Layer (File call: towers.png)
+            for(let i=0; i<10; i++) {
+                const x = (i * 400) - (camera.x * 0.3) % 400;
+                SpriteCache.draw(ctx, 'bg_mid', x, canvas.height - 400, 200, 400, (x, dx, dy, dw, dh) => {
+                    x.fillStyle = '#1e1b4b';
+                    x.fillRect(dx, canvas.height - 300, 60, 300);
+                    x.fillRect(dx - 20, canvas.height - 320, 100, 40);
+                });
+            }
+        }
+
+        // --- ENGINE ---
+        const keys = {};
+        window.onkeydown = (e) => { keys[e.code] = true; if(e.code === 'Space') doJump(); };
+        window.onkeyup = (e) => keys[e.code] = false;
+
+        function doJump() {
+            if(player.onGround) { player.vy = config.jump; player.onGround = false; spawnParticles(player.x + 20, player.y + 60, '#94a3b8', 10); }
+        }
+
+        function damagePlayer(amt) {
+            if(player.invul > 0 || player.dashTime > 0) return;
+            player.health -= amt; player.invul = 60; player.vx = -player.facing * 10; camera.shake = 20;
+            updateHUD(); if(player.health <= 0) player.die();
+        }
+
+        function updateHUD() { document.getElementById('health-bar').style.width = player.health + '%'; }
+
+        function updateBossUI() {
+            if(!boss) return;
+            document.getElementById('boss-health').style.width = (boss.hp / boss.maxHp * 100) + '%';
+            if(boss.hp <= 0) {
+                spawnParticles(boss.x + boss.w/2, boss.y + boss.h/2, '#fbbf24', 50);
+                boss = null; document.getElementById('boss-ui').classList.add('hidden');
+                setTimeout(() => { currentLevel++; if(currentLevel > 2) currentLevel = 1; createLevel(currentLevel); }, 2000);
+            }
+        }
+
+        function spawnParticles(x, y, color, count) {
+            for(let i=0; i<count; i++) {
+                particles.push({ x, y, vx: (Math.random()-0.5)*10, vy: (Math.random()-0.5)*10, life: 30, color });
+            }
+        }
+
+        function rectIntersect(x1, y1, w1, h1, x2, y2, w2, h2) {
+            return x2 < x1 + w1 && x2 + w2 > x1 && y2 < y1 + h1 && y2 + h2 > y1;
+        }
+
+        function loop() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            if(gameState === 'PLAYING') {
+                player.update();
+                if(boss) boss.update();
+
+                const tx = player.x - canvas.width/2;
+                const ty = player.y - canvas.height/2;
+                camera.x += (tx - camera.x) * 0.1;
+                camera.y += (ty - camera.y) * 0.1;
+                if(camera.shake > 0) {
+                    camera.x += (Math.random()-0.5) * camera.shake;
+                    camera.y += (Math.random()-0.5) * camera.shake;
+                    camera.shake *= 0.9;
+                }
+
+                player.onGround = false;
+                platforms.forEach(p => {
+                    if(rectIntersect(player.x, player.y, player.w, player.h, p.x, p.y, p.w, p.h)) {
+                        if(player.vy > 0 && player.y + player.h - player.vy <= p.y) {
+                            player.y = p.y - player.h; player.vy = 0; player.onGround = true;
+                        } else if(player.vy < 0 && player.y - player.vy >= p.y + p.h) {
+                            player.y = p.y + p.h; player.vy = 0;
+                        } else {
+                            player.x -= player.vx; player.vx = 0;
+                        }
+                    }
+                });
+            }
+
+            drawBackground();
+
+            platforms.forEach(p => {
+                const key = p.type === 'stone' ? 'stone' : 'platform';
+                const h = p.type === 'stone' ? TILE_SIZE : 32;
+                for(let ix = 0; ix < p.w; ix += TILE_SIZE) {
+                    for(let iy = 0; iy < p.h; iy += h) {
+                        SpriteCache.draw(ctx, key, p.x + ix - camera.x, p.y + iy - camera.y, TILE_SIZE, h);
+                    }
+                }
+            });
+
+            if(boss) boss.draw();
+            player.draw();
+
+            particles.forEach((p, i) => {
+                p.x += p.vx; p.y += p.vy; p.life--;
+                ctx.globalAlpha = p.life/30; ctx.fillStyle = p.color;
+                ctx.fillRect(p.x - camera.x, p.y - camera.y, 4, 4);
+            });
+            particles = particles.filter(p => p.life > 0);
+            ctx.globalAlpha = 1;
+
+            requestAnimationFrame(loop);
+        }
+
+        function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+        window.onresize = resize;
+        resize();
+        SpriteCache.init();
+
+        document.getElementById('start-btn').onclick = () => {
+            document.getElementById('start-screen').classList.add('hidden');
+            gameState = 'PLAYING';
+            createLevel(1);
+        };
+
+        requestAnimationFrame(loop);
+    </script>
+</body>
+</html>
