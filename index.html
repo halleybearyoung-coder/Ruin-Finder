@@ -107,7 +107,7 @@
                 const sources = {
                     stone: 'sprites/stone.png',
                     platform: 'sprites/platform.png',
-                    player: 'main_character_right_walk',
+                    player: 'sprites/player.png',
                     boss1: 'sprites/sentinel.png',
                     boss2: 'sprites/wraith.png',
                     bg_far: 'sprites/mountains.png',
@@ -159,7 +159,7 @@
         let boss = null;
 
         const player = {
-            x: 100, y: 100, w: 40, h: 60,
+            x: 100, y: 100, w: TILE_SIZE, h: 64, // Updated width to match block thickness
             vx: 0, vy: 0,
             onGround: false,
             health: 100,
@@ -184,7 +184,7 @@
                     this.dashTime = 12;
                     this.dashCd = 60;
                     this.vy = 0;
-                    spawnParticles(this.x, this.y + 30, '#ffffff', 15);
+                    spawnParticles(this.x + this.w/2, this.y + 30, '#ffffff', 15);
                 }
 
                 if(this.dashTime > 0) {
@@ -207,17 +207,25 @@
                 ctx.translate(this.x - camera.x, this.y - camera.y);
                 if(this.invul % 6 > 3) ctx.globalAlpha = 0.3;
 
+                const pw = this.w;
+                const ph = this.h;
+
                 // Call Sprite File for Player
-                SpriteCache.draw(ctx, 'player', 0, 0, this.w, this.h, (x) => {
-                    // Procedural Fallback if player.png is missing
+                SpriteCache.draw(ctx, 'player', 0, 0, pw, ph, (x, dx, dy, dw, dh) => {
+                    // Procedural Fallback scaled to 64px width
                     x.fillStyle = '#fbbf24';
-                    x.beginPath(); x.arc(20, 10, 10, 0, Math.PI*2); x.fill();
-                    x.fillRect(10, 20, 20, 30);
+                    // Head - Centered
+                    x.beginPath(); x.arc(dw / 2, 12, 12, 0, Math.PI*2); x.fill();
+                    // Body - Full block width
+                    x.fillRect(0, 24, dw, 36);
+                    // Cape/Cloth
                     x.fillStyle = '#b45309';
-                    const capeW = Math.sin(this.frame) * 5;
-                    x.fillRect(this.facing === 1 ? 5 : 25, 20, 10 + capeW, 35);
+                    const capeMotion = Math.sin(this.frame) * 8;
+                    x.fillRect(this.facing === 1 ? 4 : dw - 14, 24, 10 + capeMotion, 35);
+                    // Eyes
                     x.fillStyle = '#fff';
-                    x.fillRect(this.facing === 1 ? 22 : 12, 8, 4, 4);
+                    const eyeX = this.facing === 1 ? dw - 20 : 12;
+                    x.fillRect(eyeX, 10, 6, 6);
                 });
 
                 ctx.restore();
@@ -272,7 +280,7 @@
                                 this.state = 'idle'; this.timer = 0;
                                 this.y = 450; camera.shake = 15;
                                 spawnParticles(this.x + 64, this.y + 150, '#94a3b8', 30);
-                                if(player.onGround && Math.abs(player.x - this.x) < 500) damagePlayer(20);
+                                if(player.onGround && Math.abs(player.x + player.w/2 - (this.x + this.w/2)) < 500) damagePlayer(20);
                             }
                         }
                         if(player.vy > 0 && rectIntersect(player.x, player.y, player.w, player.h, this.x, this.y, this.w, 30)) {
@@ -351,7 +359,7 @@
         window.onkeyup = (e) => keys[e.code] = false;
 
         function doJump() {
-            if(player.onGround) { player.vy = config.jump; player.onGround = false; spawnParticles(player.x + 20, player.y + 60, '#94a3b8', 10); }
+            if(player.onGround) { player.vy = config.jump; player.onGround = false; spawnParticles(player.x + player.w/2, player.y + 60, '#94a3b8', 10); }
         }
 
         function damagePlayer(amt) {
@@ -389,8 +397,8 @@
                 player.update();
                 if(boss) boss.update();
 
-                const tx = player.x - canvas.width/2;
-                const ty = player.y - canvas.height/2;
+                const tx = player.x + player.w/2 - canvas.width/2;
+                const ty = player.y + player.h/2 - canvas.height/2;
                 camera.x += (tx - camera.x) * 0.1;
                 camera.y += (ty - camera.y) * 0.1;
                 if(camera.shake > 0) {
